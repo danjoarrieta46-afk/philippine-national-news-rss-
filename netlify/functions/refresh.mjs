@@ -1,171 +1,220 @@
 import { getStore } from "@netlify/blobs";
 import { XMLParser } from "fast-xml-parser";
 
-const GMA_RSS =
-  "https://www.gmanetwork.com/news/rss/news/feed.xml";
+const SOURCES = [
+  {
+    name: "Philstar.com",
+    url: "https://www.philstar.com/rss/headlines"
+  }
+];
 
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_"
 });
 
-export default async () => {
+function asArray(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
 
-  console.log("================================");
-  console.log("PHILIPPINE NEWS UPDATE STARTED");
-  console.log("================================");
+function clean(value = "") {
+  return String(value)
+    .replace(/<!\[CDATA\[/g, "")
+    .replace(/\]\]>/g, "")
+    .replace(/<[^>]*>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  try {
+function escapeXml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
 
-    console.log("Fetching GMA RSS...");
-    console.log(GMA_RSS);
+function getImage(item) {
 
-    const response = await fetch(GMA_RSS, {
+  if (item.enclosure?.["@_url"]) {
+    return item.enclosure["@_url"];
+  }
+
+  if (item["media:content"]?.["@_url"]) {
+    return item["media:content"]["@_url"];
+  }
+
+  if (item["media:thumbnail"]?.["@_url"]) {
+    return item["media:thumbnail"]["@_url"];
+  }
+
+  const html =
+    String(
+      item.description ||
+      item["content:encoded"] ||
+      ""
+    );
+
+  const match =
+    html.match(
+      /<img[^>]+src=["']([^"']+)["']/i
+    );
+
+  return match?.[1] || "";
+}
+
+async function fetchSource(source) {
+
+  console.log(
+    `Fetching ${source.name}`
+  );
+
+  const response =
+    await fetch(source.url, {
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; PhilippineNewsRSS/1.0)"
+          "Mozilla/5.0 (compatible; PhilippineNewsWidget/1.0)",
+        "Accept":
+          "application/rss+xml, application/xml, text/xml, */*"
       }
     });
 
-    console.log(
-      "GMA HTTP STATUS:",
-      response.status
+  console.log(
+    `${source.name} HTTP: ${response.status}`
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `${source.name}: HTTP ${response.status}`
+    );
+  }
+
+  const xml =
+    await response.text();
+
+  console.log(
+    `${source.name} XML length: ${xml.length}`
+  );
+
+  if (!xml.trim()) {
+    throw new Error(
+      `${source.name}: empty response`
+    );
+  }
+
+  const data =
+    parser.parse(xml);
+
+  const items =
+    asArray(
+      data?.rss?.channel?.item
     );
 
-    if (!response.ok) {
-      throw new Error(
-        `GMA returned HTTP ${response.status}`
-      );
-    }
+  console.log(
+    `${source.name}: ${items.length} articles`
+  );
 
-    const xml =
-      await response.text();
+  return items
+    .map(item => {
 
-    console.log(
-      "GMA XML LENGTH:",
-      xml.length
-    );
+      const title =
+        clean(item.title);
 
-    const data =
-      parser.parse(xml);
+      const link =
+        clean(
+          typeof item.link === "string"
+            ? item.link
+            : item.link?.["@_href"] || ""
+        );
 
-    const channel =
-      data?.rss?.channel;
+      const description =
+        clean(
+          item.description ||
+          item.summary ||
+          ""
+        );
 
-    if (!channel) {
+      const pubDate =
+        item.pubDate ||
+        item.published ||
+        item.updated ||
+        "";
 
-      console.log(
-        "Could not find RSS channel"
-      );
+      const date =
+        new Date(pubDate);
 
-      console.log(
-        "Top-level XML keys:",
-        Object.keys(data || {})
-      );
+      if (!title || !link) {
+        return null;
+      }
 
-      throw new Error(
-        "GMA RSS format not recognized"
-      );
-    }
+      return {
+        title,
+        link,
+        description,
+        image: getImage(item),
+        source: source.name,
+        date:
+          Number.isNaN(date.getTime())
+            ? new Date()
+            : date
+      };
 
-    let items =
-      channel.item || [];
+    })
+    .filter(Boolean);
+}
 
-    if (!Array.isArray(items)) {
-      items = [items];
-    }
+function createRSS(articles) {
 
-    console.log(
-      "GMA ARTICLES FOUND:",
-      items.length
-    );
+  const items =
+    articles.map(article => {
 
-    const articles =
-      items
-        .map(item => {
+      const image =
+        article.image
+          ? `
+            <enclosure
+              url="${escapeXml(article.image)}"
+              type="image/jpeg"
+            />
+          `
+          : "";
 
-          const title =
-            String(
-              item.title || ""
-            ).trim();
+      return `
+        <item>
 
-          const link =
-            String(
-              item.link || ""
-            ).trim();
+          <title>
+            ${escapeXml(article.title)}
+          </title>
 
-          const description =
-            String(
-              item.description || ""
-            )
-            .replace(
-              /<[^>]+>/g,
-              ""
-            )
-            .trim();
+          <link>
+            ${escapeXml(article.link)}
+          </link>
 
-          const pubDate =
-            String(
-              item.pubDate || ""
-            ).trim();
+          <guid isPermaLink="true">
+            ${escapeXml(article.link)}
+          </guid>
 
-          if (!title || !link) {
-            return null;
-          }
+          <description>
+            ${escapeXml(article.description)}
+          </description>
 
-          return {
-            title,
-            link,
-            description,
-            pubDate,
-            source: "GMA News"
-          };
+          <pubDate>
+            ${article.date.toUTCString()}
+          </pubDate>
 
-        })
-        .filter(Boolean)
-        .slice(0, 50);
+          <source>
+            ${escapeXml(article.source)}
+          </source>
 
-    console.log(
-      "ARTICLES READY:",
-      articles.length
-    );
+          ${image}
 
-    const rssItems =
-      articles
-        .map(article => `
+        </item>
+      `;
 
-      <item>
+    }).join("");
 
-        <title>
-          ${escapeXml(article.title)}
-        </title>
-
-        <link>
-          ${escapeXml(article.link)}
-        </link>
-
-        <guid isPermaLink="true">
-          ${escapeXml(article.link)}
-        </guid>
-
-        <description>
-          ${escapeXml(article.description)}
-        </description>
-
-        <pubDate>
-          ${escapeXml(article.pubDate)}
-        </pubDate>
-
-        <source>
-          GMA News
-        </source>
-
-      </item>
-
-    `)
-    .join("");
-
-    const rss = `<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 
 <rss version="2.0">
 
@@ -180,7 +229,7 @@ export default async () => {
     </link>
 
     <description>
-      Latest Philippine national news
+      Automatically updated Philippine national news.
     </description>
 
     <language>
@@ -191,77 +240,105 @@ export default async () => {
       ${new Date().toUTCString()}
     </lastBuildDate>
 
-    ${rssItems}
+    <ttl>
+      15
+    </ttl>
+
+    ${items}
 
   </channel>
 
 </rss>`;
-
-    const store =
-      getStore("philippine-news");
-
-    await store.set(
-      "feed.xml",
-      rss
-    );
-
-    console.log(
-      "RSS FEED SAVED SUCCESSFULLY"
-    );
-
-    console.log(
-      `TOTAL ARTICLES SAVED: ${articles.length}`
-    );
-
-    return new Response(
-      `Updated ${articles.length} articles`
-    );
-
-  } catch (error) {
-
-    console.error(
-      "NEWS UPDATE FAILED:"
-    );
-
-    console.error(
-      error
-    );
-
-    return new Response(
-      "News update failed: " +
-      error.message,
-      {
-        status: 500
-      }
-    );
-  }
-};
-
-function escapeXml(value) {
-
-  return String(value || "")
-    .replace(
-      /&/g,
-      "&amp;"
-    )
-    .replace(
-      /</g,
-      "&lt;"
-    )
-    .replace(
-      />/g,
-      "&gt;"
-    )
-    .replace(
-      /"/g,
-      "&quot;"
-    )
-    .replace(
-      /'/g,
-      "&apos;"
-    );
 }
+
+export default async () => {
+
+  console.log(
+    "================================"
+  );
+
+  console.log(
+    "PHILIPPINE NEWS UPDATE"
+  );
+
+  console.log(
+    "================================"
+  );
+
+  let articles = [];
+
+  for (const source of SOURCES) {
+
+    try {
+
+      const results =
+        await fetchSource(source);
+
+      articles.push(
+        ...results
+      );
+
+    } catch (error) {
+
+      console.error(
+        `${source.name} FAILED:`,
+        error.message
+      );
+
+    }
+
+  }
+
+  articles.sort(
+    (a, b) =>
+      b.date.getTime() -
+      a.date.getTime()
+  );
+
+  const seen =
+    new Set();
+
+  articles =
+    articles.filter(article => {
+
+      if (seen.has(article.link)) {
+        return false;
+      }
+
+      seen.add(article.link);
+
+      return true;
+
+    });
+
+  articles =
+    articles.slice(0, 100);
+
+  console.log(
+    `TOTAL ARTICLES: ${articles.length}`
+  );
+
+  const rss =
+    createRSS(articles);
+
+  const store =
+    getStore("philippine-news");
+
+  await store.set(
+    "feed.xml",
+    rss
+  );
+
+  console.log(
+    "RSS FEED SAVED"
+  );
+
+  return new Response(
+    `Updated ${articles.length} articles`
+  );
+};
 
 export const config = {
   schedule: "*/15 * * * *"
 };
+
