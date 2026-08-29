@@ -22,9 +22,14 @@ function clean(value = "") {
   return String(value)
     .replace(/<!\[CDATA\[/g, "")
     .replace(/\]\]>/g, "")
-    .replace(/<[^>]*>/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function stripHtml(value = "") {
+  return clean(
+    String(value).replace(/<[^>]*>/g, " ")
+  );
 }
 
 function escapeXml(value = "") {
@@ -36,7 +41,10 @@ function escapeXml(value = "") {
     .replace(/'/g, "&apos;");
 }
 
-function getImage(item) {
+/*
+ * First try to find an image directly inside RSS.
+ */
+function getRSSImage(item) {
 
   if (item.enclosure?.["@_url"]) {
     return item.enclosure["@_url"];
@@ -50,6 +58,26 @@ function getImage(item) {
     return item["media:thumbnail"]["@_url"];
   }
 
+  if (Array.isArray(item["media:content"])) {
+
+    const media =
+      item["media:content"].find(
+        x =>
+          x?.["@_url"] &&
+          (
+            !x?.["@_type"] ||
+            x["@_type"].startsWith("image/")
+          )
+      );
+
+    if (media) {
+      return media["@_url"];
+    }
+  }
+
+  /*
+   * Look inside RSS HTML.
+   */
   const html =
     String(
       item.description ||
@@ -57,12 +85,116 @@ function getImage(item) {
       ""
     );
 
-  const match =
+  const imageMatch =
     html.match(
-      /<img[^>]+src=["']([^"']+)["']/i
+      /<img[^>]+(?:src|data-src)=["']([^"']+)["']/i
     );
 
-  return match?.[1] || "";
+  if (imageMatch?.[1]) {
+    return imageMatch[1];
+  }
+
+  return "";
+}
+
+/*
+ * If RSS has no image, look at the article page.
+ * We only call this for the 10 newest articles.
+ */
+async function getArticleImage(url) {
+
+  try {
+
+    const response =
+      await fetch(url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (compatible; PhilippineNewsWidget/1.0)",
+          "Accept":
+            "text/html,application/xhtml+xml"
+        }
+      });
+
+    if (!response.ok) {
+      console.log(
+        `Image page HTTP ${response.status}: ${url}`
+      );
+
+      return "";
+    }
+
+    const html =
+      await response.text();
+
+    /*
+     * og:image
+     */
+    let match =
+      html.match(
+        /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i
+      );
+
+    if (match?.[1]) {
+      return decodeHtmlEntities(match[1]);
+    }
+
+    /*
+     * Handles content before property.
+     */
+    match =
+      html.match(
+        /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i
+      );
+
+    if (match?.[1]) {
+      return decodeHtmlEntities(match[1]);
+    }
+
+    /*
+     * twitter:image fallback
+     */
+    match =
+      html.match(
+        /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i
+      );
+
+    if (match?.[1]) {
+      return decodeHtmlEntities(match[1]);
+    }
+
+    /*
+     * Reverse twitter:image format.
+     */
+    match =
+      html.match(
+        /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i
+      );
+
+    if (match?.[1]) {
+      return decodeHtmlEntities(match[1]);
+    }
+
+    return "";
+
+  } catch (error) {
+
+    console.log(
+      `Image lookup failed: ${url}`
+    );
+
+    return "";
+  }
+}
+
+function decodeHtmlEntities(value) {
+
+  return String(value)
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+
 }
 
 async function fetchSource(source) {
@@ -113,7 +245,7 @@ async function fetchSource(source) {
     );
 
   console.log(
-    `${source.name}: ${items.length} articles`
+    `${source.name}: ${items.length} RSS articles`
   );
 
   return items
@@ -130,9 +262,10 @@ async function fetchSource(source) {
         );
 
       const description =
-        clean(
+        stripHtml(
           item.description ||
           item.summary ||
+          item["content:encoded"] ||
           ""
         );
 
@@ -145,6 +278,9 @@ async function fetchSource(source) {
       const date =
         new Date(pubDate);
 
+      const image =
+        getRSSImage(item);
+
       if (!title || !link) {
         return null;
       }
@@ -153,7 +289,7 @@ async function fetchSource(source) {
         title,
         link,
         description,
-        image: getImage(item),
+        image,
         source: source.name,
         date:
           Number.isNaN(date.getTime())
@@ -173,44 +309,44 @@ function createRSS(articles) {
       const image =
         article.image
           ? `
-            <enclosure
-              url="${escapeXml(article.image)}"
-              type="image/jpeg"
-            />
-          `
+        <enclosure
+          url="${escapeXml(article.image)}"
+          type="image/jpeg"
+        />
+      `
           : "";
 
       return `
-        <item>
+      <item>
 
-          <title>
-            ${escapeXml(article.title)}
-          </title>
+        <title>
+          ${escapeXml(article.title)}
+        </title>
 
-          <link>
-            ${escapeXml(article.link)}
-          </link>
+        <link>
+          ${escapeXml(article.link)}
+        </link>
 
-          <guid isPermaLink="true">
-            ${escapeXml(article.link)}
-          </guid>
+        <guid isPermaLink="true">
+          ${escapeXml(article.link)}
+        </guid>
 
-          <description>
-            ${escapeXml(article.description)}
-          </description>
+        <description>
+          ${escapeXml(article.description)}
+        </description>
 
-          <pubDate>
-            ${article.date.toUTCString()}
-          </pubDate>
+        <pubDate>
+          ${article.date.toUTCString()}
+        </pubDate>
 
-          <source>
-            ${escapeXml(article.source)}
-          </source>
+        <source>
+          ${escapeXml(article.source)}
+        </source>
 
-          ${image}
+        ${image}
 
-        </item>
-      `;
+      </item>
+    `;
 
     }).join("");
 
@@ -254,15 +390,15 @@ function createRSS(articles) {
 export default async () => {
 
   console.log(
-    "================================"
+    "======================================"
   );
 
   console.log(
-    "PHILIPPINE NEWS UPDATE"
+    "PHILIPPINE NEWS UPDATE STARTED"
   );
 
   console.log(
-    "================================"
+    "======================================"
   );
 
   let articles = [];
@@ -286,15 +422,20 @@ export default async () => {
       );
 
     }
-
   }
 
+  /*
+   * Newest first.
+   */
   articles.sort(
     (a, b) =>
       b.date.getTime() -
       a.date.getTime()
   );
 
+  /*
+   * Remove duplicate URLs.
+   */
   const seen =
     new Set();
 
@@ -311,18 +452,81 @@ export default async () => {
 
     });
 
+  /*
+   * Keep the latest 100 articles.
+   */
   articles =
     articles.slice(0, 100);
 
   console.log(
-    `TOTAL ARTICLES: ${articles.length}`
+    `RSS ARTICLES: ${articles.length}`
+  );
+
+  /*
+   * Only retrieve article pages for
+   * the 10 newest stories that don't
+   * already have an image.
+   *
+   * This keeps the free setup lightweight.
+   */
+  const imageCandidates =
+    articles
+      .filter(article => !article.image)
+      .slice(0, 10);
+
+  console.log(
+    `NEEDING IMAGE LOOKUP: ${imageCandidates.length}`
+  );
+
+  /*
+   * Fetch those 10 article pages in parallel.
+   */
+  await Promise.all(
+    imageCandidates.map(
+      async article => {
+
+        const image =
+          await getArticleImage(
+            article.link
+          );
+
+        if (image) {
+
+          article.image =
+            image;
+
+          console.log(
+            `IMAGE FOUND: ${article.title}`
+          );
+
+        } else {
+
+          console.log(
+            `NO IMAGE: ${article.title}`
+          );
+
+        }
+
+      }
+    )
+  );
+
+  const imageCount =
+    articles.filter(
+      article => article.image
+    ).length;
+
+  console.log(
+    `ARTICLES WITH IMAGES: ${imageCount}`
   );
 
   const rss =
     createRSS(articles);
 
   const store =
-    getStore("philippine-news");
+    getStore(
+      "philippine-news"
+    );
 
   await store.set(
     "feed.xml",
@@ -330,15 +534,14 @@ export default async () => {
   );
 
   console.log(
-    "RSS FEED SAVED"
+    "RSS FEED SAVED SUCCESSFULLY"
   );
 
   return new Response(
-    `Updated ${articles.length} articles`
+    `Updated ${articles.length} articles; ${imageCount} with images`
   );
 };
 
 export const config = {
   schedule: "*/15 * * * *"
 };
-
