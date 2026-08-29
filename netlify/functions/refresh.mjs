@@ -5,10 +5,6 @@ const SOURCES = [
   {
     name: "GMA News",
     url: "https://www.gmanetwork.com/news/rss/news/feed.xml"
-  },
-  {
-    name: "ABS-CBN News",
-    url: "https://www.abs-cbn.com/rss.aspx/news"
   }
 ];
 
