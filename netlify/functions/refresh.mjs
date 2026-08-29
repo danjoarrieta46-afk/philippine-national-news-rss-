@@ -5,6 +5,36 @@ const SOURCES = [
   {
     name: "Philstar.com",
     url: "https://www.philstar.com/rss/headlines"
+  },
+
+  {
+    name: "Inquirer.net",
+    url: "https://newsinfo.inquirer.net/feed"
+  },
+
+  {
+    name: "Rappler",
+    url: "https://www.rappler.com/feed/"
+  },
+
+  {
+    name: "Manila Bulletin",
+    url: "https://mb.com.ph/feed"
+  },
+
+  {
+    name: "BusinessWorld",
+    url: "https://www.bworldonline.com/feed/"
+  },
+
+  {
+    name: "The Manila Times",
+    url: "https://www.manilatimes.net/feed"
+  },
+
+  {
+    name: "Manila Standard",
+    url: "https://manilastandard.net/feed"
   }
 ];
 
@@ -28,7 +58,8 @@ function clean(value = "") {
 
 function stripHtml(value = "") {
   return clean(
-    String(value).replace(/<[^>]*>/g, " ")
+    String(value)
+      .replace(/<[^>]*>/g, " ")
   );
 }
 
@@ -41,9 +72,6 @@ function escapeXml(value = "") {
     .replace(/'/g, "&apos;");
 }
 
-/*
- * First try to find an image directly inside RSS.
- */
 function getRSSImage(item) {
 
   if (item.enclosure?.["@_url"]) {
@@ -75,9 +103,6 @@ function getRSSImage(item) {
     }
   }
 
-  /*
-   * Look inside RSS HTML.
-   */
   const html =
     String(
       item.description ||
@@ -91,16 +116,14 @@ function getRSSImage(item) {
     );
 
   if (imageMatch?.[1]) {
-    return imageMatch[1];
+    return decodeHtmlEntities(
+      imageMatch[1]
+    );
   }
 
   return "";
 }
 
-/*
- * If RSS has no image, look at the article page.
- * We only call this for the 10 newest articles.
- */
 async function getArticleImage(url) {
 
   try {
@@ -116,71 +139,41 @@ async function getArticleImage(url) {
       });
 
     if (!response.ok) {
-      console.log(
-        `Image page HTTP ${response.status}: ${url}`
-      );
-
       return "";
     }
 
     const html =
       await response.text();
 
-    /*
-     * og:image
-     */
-    let match =
-      html.match(
-        /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i
-      );
+    const patterns = [
 
-    if (match?.[1]) {
-      return decodeHtmlEntities(match[1]);
-    }
+      /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
 
-    /*
-     * Handles content before property.
-     */
-    match =
-      html.match(
-        /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i
-      );
+      /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
 
-    if (match?.[1]) {
-      return decodeHtmlEntities(match[1]);
-    }
+      /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i,
 
-    /*
-     * twitter:image fallback
-     */
-    match =
-      html.match(
-        /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i
-      );
+      /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i
 
-    if (match?.[1]) {
-      return decodeHtmlEntities(match[1]);
-    }
+    ];
 
-    /*
-     * Reverse twitter:image format.
-     */
-    match =
-      html.match(
-        /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i
-      );
+    for (const pattern of patterns) {
 
-    if (match?.[1]) {
-      return decodeHtmlEntities(match[1]);
+      const match =
+        html.match(pattern);
+
+      if (match?.[1]) {
+
+        return decodeHtmlEntities(
+          match[1]
+        );
+
+      }
     }
 
     return "";
 
-  } catch (error) {
-
-    console.log(
-      `Image lookup failed: ${url}`
-    );
+  } catch {
 
     return "";
   }
@@ -197,126 +190,197 @@ function decodeHtmlEntities(value) {
 
 }
 
+function getLink(item) {
+
+  if (typeof item.link === "string") {
+    return clean(item.link);
+  }
+
+  if (item.link?.["@_href"]) {
+    return clean(
+      item.link["@_href"]
+    );
+  }
+
+  if (Array.isArray(item.link)) {
+
+    const alternate =
+      item.link.find(
+        link =>
+          link?.["@_href"] &&
+          (
+            !link?.["@_rel"] ||
+            link["@_rel"] === "alternate"
+          )
+      );
+
+    return clean(
+      alternate?.["@_href"] || ""
+    );
+  }
+
+  return "";
+}
+
 async function fetchSource(source) {
 
   console.log(
     `Fetching ${source.name}`
   );
 
-  const response =
-    await fetch(source.url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (compatible; PhilippineNewsWidget/1.0)",
-        "Accept":
-          "application/rss+xml, application/xml, text/xml, */*"
-      }
-    });
+  try {
 
-  console.log(
-    `${source.name} HTTP: ${response.status}`
-  );
+    const response =
+      await fetch(source.url, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (compatible; PhilippineNewsWidget/1.0)",
+          "Accept":
+            "application/rss+xml, application/xml, text/xml, */*"
+        }
+      });
 
-  if (!response.ok) {
-    throw new Error(
+    console.log(
       `${source.name}: HTTP ${response.status}`
     );
-  }
 
-  const xml =
-    await response.text();
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}`
+      );
+    }
 
-  console.log(
-    `${source.name} XML length: ${xml.length}`
-  );
+    const xml =
+      await response.text();
 
-  if (!xml.trim()) {
-    throw new Error(
-      `${source.name}: empty response`
-    );
-  }
-
-  const data =
-    parser.parse(xml);
-
-  const items =
-    asArray(
-      data?.rss?.channel?.item
+    console.log(
+      `${source.name}: ${xml.length} bytes`
     );
 
-  console.log(
-    `${source.name}: ${items.length} RSS articles`
-  );
+    if (!xml.trim()) {
+      throw new Error(
+        "empty response"
+      );
+    }
 
-  return items
-    .map(item => {
+    const data =
+      parser.parse(xml);
 
-      const title =
-        clean(item.title);
+    let items = [];
 
-      const link =
-        clean(
-          typeof item.link === "string"
-            ? item.link
-            : item.link?.["@_href"] || ""
+    /*
+     * Standard RSS
+     */
+    if (data?.rss?.channel?.item) {
+
+      items =
+        asArray(
+          data.rss.channel.item
         );
+    }
 
-      const description =
-        stripHtml(
-          item.description ||
-          item.summary ||
-          item["content:encoded"] ||
-          ""
+    /*
+     * Atom
+     */
+    else if (data?.feed?.entry) {
+
+      items =
+        asArray(
+          data.feed.entry
         );
+    }
 
-      const pubDate =
-        item.pubDate ||
-        item.published ||
-        item.updated ||
-        "";
+    console.log(
+      `${source.name}: ${items.length} articles`
+    );
 
-      const date =
-        new Date(pubDate);
+    return items
+      .map(item => {
 
-      const image =
-        getRSSImage(item);
+        const title =
+          clean(item.title);
 
-      if (!title || !link) {
-        return null;
-      }
+        const link =
+          getLink(item);
 
-      return {
-        title,
-        link,
-        description,
-        image,
-        source: source.name,
-        date:
-          Number.isNaN(date.getTime())
-            ? new Date()
-            : date
-      };
+        const description =
+          stripHtml(
+            item.description ||
+            item.summary ||
+            item["content:encoded"] ||
+            item.content ||
+            ""
+          );
 
-    })
-    .filter(Boolean);
+        const rawDate =
+          item.pubDate ||
+          item.published ||
+          item.updated ||
+          "";
+
+        const date =
+          new Date(rawDate);
+
+        const image =
+          getRSSImage(item);
+
+        if (!title || !link) {
+          return null;
+        }
+
+        return {
+
+          title,
+
+          link,
+
+          description,
+
+          image,
+
+          source:
+            source.name,
+
+          date:
+            Number.isNaN(
+              date.getTime()
+            )
+              ? new Date()
+              : date
+
+        };
+
+      })
+      .filter(Boolean);
+
+  } catch (error) {
+
+    console.error(
+      `${source.name} FAILED:`,
+      error.message
+    );
+
+    return [];
+  }
 }
 
 function createRSS(articles) {
 
   const items =
-    articles.map(article => {
+    articles
+      .map(article => {
 
-      const image =
-        article.image
-          ? `
+        const image =
+          article.image
+            ? `
         <enclosure
           url="${escapeXml(article.image)}"
           type="image/jpeg"
         />
       `
-          : "";
+            : "";
 
-      return `
+        return `
       <item>
 
         <title>
@@ -348,7 +412,8 @@ function createRSS(articles) {
       </item>
     `;
 
-    }).join("");
+      })
+      .join("");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 
@@ -365,7 +430,7 @@ function createRSS(articles) {
     </link>
 
     <description>
-      Automatically updated Philippine national news.
+      Automatically updated Philippine national news from multiple Philippine publishers.
     </description>
 
     <language>
@@ -394,7 +459,7 @@ export default async () => {
   );
 
   console.log(
-    "PHILIPPINE NEWS UPDATE STARTED"
+    "PHILIPPINE NEWS MULTI-SOURCE UPDATE"
   );
 
   console.log(
@@ -403,26 +468,27 @@ export default async () => {
 
   let articles = [];
 
-  for (const source of SOURCES) {
+  /*
+   * Fetch all sources.
+   *
+   * If one source fails, the others
+   * continue working.
+   */
+  const results =
+    await Promise.all(
+      SOURCES.map(
+        source =>
+          fetchSource(source)
+      )
+    );
 
-    try {
-
-      const results =
-        await fetchSource(source);
-
-      articles.push(
-        ...results
-      );
-
-    } catch (error) {
-
-      console.error(
-        `${source.name} FAILED:`,
-        error.message
-      );
-
-    }
+  for (const result of results) {
+    articles.push(...result);
   }
+
+  console.log(
+    `TOTAL RAW ARTICLES: ${articles.length}`
+  );
 
   /*
    * Newest first.
@@ -442,7 +508,9 @@ export default async () => {
   articles =
     articles.filter(article => {
 
-      if (seen.has(article.link)) {
+      if (
+        seen.has(article.link)
+      ) {
         return false;
       }
 
@@ -453,34 +521,34 @@ export default async () => {
     });
 
   /*
-   * Keep the latest 100 articles.
+   * Keep 100 latest articles.
    */
   articles =
     articles.slice(0, 100);
 
   console.log(
-    `RSS ARTICLES: ${articles.length}`
+    `UNIQUE ARTICLES: ${articles.length}`
   );
 
   /*
-   * Only retrieve article pages for
-   * the 10 newest stories that don't
-   * already have an image.
+   * Only inspect the 10 newest
+   * articles without RSS images.
    *
-   * This keeps the free setup lightweight.
+   * This protects the free setup
+   * from excessive requests.
    */
   const imageCandidates =
     articles
-      .filter(article => !article.image)
+      .filter(
+        article =>
+          !article.image
+      )
       .slice(0, 10);
 
   console.log(
-    `NEEDING IMAGE LOOKUP: ${imageCandidates.length}`
+    `IMAGE LOOKUPS: ${imageCandidates.length}`
   );
 
-  /*
-   * Fetch those 10 article pages in parallel.
-   */
   await Promise.all(
     imageCandidates.map(
       async article => {
@@ -496,13 +564,7 @@ export default async () => {
             image;
 
           console.log(
-            `IMAGE FOUND: ${article.title}`
-          );
-
-        } else {
-
-          console.log(
-            `NO IMAGE: ${article.title}`
+            `IMAGE FOUND: ${article.source}`
           );
 
         }
@@ -513,7 +575,8 @@ export default async () => {
 
   const imageCount =
     articles.filter(
-      article => article.image
+      article =>
+        Boolean(article.image)
     ).length;
 
   console.log(
@@ -534,7 +597,15 @@ export default async () => {
   );
 
   console.log(
+    "======================================"
+  );
+
+  console.log(
     "RSS FEED SAVED SUCCESSFULLY"
+  );
+
+  console.log(
+    "======================================"
   );
 
   return new Response(
@@ -545,3 +616,4 @@ export default async () => {
 export const config = {
   schedule: "*/15 * * * *"
 };
+
