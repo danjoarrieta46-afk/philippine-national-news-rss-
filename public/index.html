@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <title>
+    Philippine National News
+  </title>
+
+  <style>
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+
+      margin: 0;
+
+      padding: 25px;
+
+      background:
+        #eef1f5;
+
+      font-family:
+        Arial,
+        Helvetica,
+        sans-serif;
+    }
+
+    .widget {
+
+      width: 100%;
+
+      max-width: 520px;
+
+      margin: auto;
+
+      background: white;
+
+      border-radius: 16px;
+
+      overflow: hidden;
+
+      box-shadow:
+        0 8px 30px
+        rgba(0, 0, 0, .12);
+    }
+
+    .header {
+
+      background:
+        linear-gradient(
+          135deg,
+          #0038a8,
+          #0057d9
+        );
+
+      color: white;
+
+      padding: 20px;
+    }
+
+    .header h1 {
+
+      margin: 0;
+
+      font-size: 21px;
+    }
+
+    .header p {
+
+      margin:
+        5px 0 0;
+
+      font-size: 13px;
+
+      opacity: .85;
+    }
+
+    .news-list {
+
+      height: 700px;
+
+      overflow-y: auto;
+
+      scroll-behavior: smooth;
+    }
+
+    .news-list::-webkit-scrollbar {
+
+      width: 8px;
+    }
+
+    .news-list::-webkit-scrollbar-track {
+
+      background:
+        #f1f1f1;
+    }
+
+    .news-list::-webkit-scrollbar-thumb {
+
+      background:
+        #b8bec7;
+
+      border-radius: 10px;
+    }
+
+    .article {
+
+      border-bottom:
+        1px solid #e5e7eb;
+    }
+
+    .article-image {
+
+      width: 100%;
+
+      aspect-ratio: 16 / 9;
+
+      object-fit: cover;
+
+      display: block;
+
+      background:
+        #e5e7eb;
+    }
+
+    .article-content {
+
+      padding:
+        14px 16px 18px;
+    }
+
+    .article-title {
+
+      color:
+        #111827;
+
+      text-decoration:
+        none;
+
+      font-size:
+        17px;
+
+      font-weight:
+        700;
+
+      line-height:
+        1.4;
+
+      display:
+        block;
+    }
+
+    .article-title:hover {
+
+      color:
+        #0038a8;
+    }
+
+    .description {
+
+      margin-top:
+        8px;
+
+      color:
+        #4b5563;
+
+      font-size:
+        13px;
+
+      line-height:
+        1.4;
+    }
+
+    .meta {
+
+      margin-top:
+        9px;
+
+      color:
+        #6b7280;
+
+      font-size:
+        12px;
+    }
+
+    .loading {
+
+      padding:
+        40px 20px;
+
+      text-align:
+        center;
+
+      color:
+        #6b7280;
+    }
+
+    .footer {
+
+      padding:
+        14px;
+
+      text-align:
+        center;
+
+      border-top:
+        1px solid #eee;
+    }
+
+    .footer a {
+
+      color:
+        #0038a8;
+
+      text-decoration:
+        none;
+
+      font-weight:
+        bold;
+
+      font-size:
+        13px;
+    }
+
+    @media (max-width: 600px) {
+
+      body {
+        padding: 10px;
+      }
+
+      .news-list {
+        height: 75vh;
+      }
+
+    }
+
+  </style>
+
+</head>
+
+<body>
+
+  <div class="widget">
+
+    <div class="header">
+
+      <h1>
+        🇵🇭 Philippine National News
+      </h1>
+
+      <p>
+        Latest national headlines
+      </p>
+
+    </div>
+
+    <div
+      id="news"
+      class="news-list"
+    >
+
+      <div class="loading">
+        Loading latest news...
+      </div>
+
+    </div>
+
+    <div class="footer">
+
+      <a href="/feed.xml">
+        RSS Feed →
+      </a>
+
+    </div>
+
+  </div>
+
+
+  <script>
+
+    async function loadNews() {
+
+      try {
+
+        const response =
+          await fetch(
+            "/feed.xml?t=" +
+            Date.now()
+          );
+
+        if (!response.ok) {
+          throw new Error(
+            "RSS feed unavailable"
+          );
+        }
+
+        const text =
+          await response.text();
+
+        const parser =
+          new DOMParser();
+
+        const xml =
+          parser.parseFromString(
+            text,
+            "application/xml"
+          );
+
+        const items =
+          Array.from(
+            xml.querySelectorAll(
+              "item"
+            )
+          );
+
+        const container =
+          document.getElementById(
+            "news"
+          );
+
+        container.innerHTML = "";
+
+        if (!items.length) {
+
+          container.innerHTML = `
+            <div class="loading">
+              No news available yet.
+            </div>
+          `;
+
+          return;
+        }
+
+        items
+          .slice(0, 50)
+          .forEach(item => {
+
+            const title =
+              item.querySelector(
+                "title"
+              )?.textContent
+                ?.trim() ||
+              "Untitled";
+
+            const link =
+              item.querySelector(
+                "link"
+              )?.textContent
+                ?.trim() ||
+              "#";
+
+            const source =
+              item.querySelector(
+                "source"
+              )?.textContent
+                ?.trim() ||
+              "Philippine News";
+
+            const description =
+              item.querySelector(
+                "description"
+              )?.textContent
+                ?.trim() ||
+              "";
+
+            const pubDate =
+              item.querySelector(
+                "pubDate"
+              )?.textContent
+                ?.trim() ||
+              "";
+
+            const enclosure =
+              item.querySelector(
+                "enclosure"
+              );
+
+            const image =
+              enclosure
+                ?.getAttribute(
+                  "url"
+                );
+
+            const article =
+              document.createElement(
+                "article"
+              );
+
+            article.className =
+              "article";
+
+            let dateText = "";
+
+            if (pubDate) {
+
+              const date =
+                new Date(pubDate);
+
+              if (
+                !Number.isNaN(
+                  date.getTime()
+                )
+              ) {
+
+                dateText =
+                  date.toLocaleString(
+                    "en-PH",
+                    {
+                      dateStyle:
+                        "medium",
+                      timeStyle:
+                        "short"
+                    }
+                  );
+              }
+            }
+
+            const imageHTML =
+              image
+                ? `
+                  <img
+                    class="article-image"
+                    src="${image}"
+                    alt=""
+                    loading="lazy"
+                    onerror="
+                      this.style.display='none'
+                    "
+                  >
+                `
+                : "";
+
+            article.innerHTML = `
+
+              ${imageHTML}
+
+              <div class="article-content">
+
+                <a
+                  class="article-title"
+                  href="${link}"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  ${title}
+                </a>
+
+                ${
+                  description
+                    ? `
+                      <div
+                        class="description"
+                      >
+                        ${description}
+                      </div>
+                    `
+                    : ""
+                }
+
+                <div class="meta">
+
+                  ${source}
+
+                  ${
+                    dateText
+                      ? " • " +
+                        dateText
+                      : ""
+                  }
+
+                </div>
+
+              </div>
+
+            `;
+
+            container.appendChild(
+              article
+            );
+
+          });
+
+      } catch (error) {
+
+        console.error(error);
+
+        document.getElementById(
+          "news"
+        ).innerHTML = `
+
+          <div class="loading">
+
+            Unable to load news.
+
+            <br><br>
+
+            Please try again shortly.
+
+          </div>
+
+        `;
+
+      }
+
+    }
+
+    loadNews();
+
+    setInterval(
+      loadNews,
+      15 * 60 * 1000
+    );
+
+  </script>
+
+</body>
+
+</html>
